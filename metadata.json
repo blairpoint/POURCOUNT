@@ -1,0 +1,7 @@
+{
+  "name": "PourCount - Bottle Inventory Assistant",
+  "description": "Estimate remaining pours in spirit bottles using AI image analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
