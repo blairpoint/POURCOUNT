@@ -10,31 +10,35 @@ export interface BottleAnalysis {
   explanation: string;
 }
 
-export async function analyzeBottleImage(base64Image: string): Promise<BottleAnalysis[]> {
+export async function analyzeBottleMultiAngle(base64Images: string[]): Promise<BottleAnalysis[]> {
   const model = "gemini-3-flash-preview";
   
-  const prompt = `Analyze this image as a LiDAR-enhanced precision inventory system.
+  const prompt = `Analyze these images from a 360° precision scan of spirit bottles. 
+  The images show the bottles from different angles (front, sides, back).
+  
   1. Identify ALL spirit bottles.
-  2. For EACH bottle, perform a Geometric Volume Analysis:
-     - Identify Brand and Bottle Shape (e.g., Cylindrical, Tapered, Square).
+  2. Synthesize information from all angles to perform a high-precision Geometric Volume Analysis:
+     - Identify Brand and exact Bottle Shape.
      - Determine Full Volume (ml).
-     - Calculate Fill Percentage: Analyze the liquid line relative to the bottle's total height. Account for the reduced volume in the neck and shoulders of the bottle.
+     - Calculate Fill Percentage: Use the multi-angle data to account for bottle thickness, base depth, and complex shapes (like square or irregular bottles).
      - Provide a "Confidence Score" for the estimation.
-     - Explanation: Describe the visual cues (e.g., "Liquid is exactly at the top of the label on a 700ml cylindrical bottle").
+     - Explanation: Describe how the different angles helped refine the estimate.
   
   Return the result as an array of objects in JSON format.`;
+
+  const imageParts = base64Images.map(img => ({
+    inlineData: {
+      mimeType: "image/jpeg",
+      data: img.split(",")[1] || img,
+    },
+  }));
 
   const response = await ai.models.generateContent({
     model,
     contents: {
       parts: [
         { text: prompt },
-        {
-          inlineData: {
-            mimeType: "image/jpeg",
-            data: base64Image.split(",")[1] || base64Image,
-          },
-        },
+        ...imageParts
       ],
     },
     config: {
@@ -63,4 +67,8 @@ export async function analyzeBottleImage(base64Image: string): Promise<BottleAna
     ...r,
     id: Math.random().toString(36).substring(7)
   }));
+}
+
+export async function analyzeBottleImage(base64Image: string): Promise<BottleAnalysis[]> {
+  return analyzeBottleMultiAngle([base64Image]);
 }

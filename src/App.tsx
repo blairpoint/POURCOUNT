@@ -4,7 +4,7 @@ import { Camera, Upload, RotateCcw, Wine, Info, AlertCircle, Loader2, ChevronRig
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { analyzeBottleImage, type BottleAnalysis } from './lib/gemini';
+import { analyzeBottleImage, analyzeBottleMultiAngle, type BottleAnalysis } from './lib/gemini';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -14,12 +14,15 @@ const POUR_SIZE_ML = 30;
 
 export default function App() {
   const [image, setImage] = useState<string | null>(null);
+  const [multiImages, setMultiImages] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentResults, setCurrentResults] = useState<BottleAnalysis[]>([]);
   const [inventory, setInventory] = useState<BottleAnalysis[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [scanMode, setScanMode] = useState<'single' | '360'>('single');
+  const [scanStep, setScanStep] = useState(0);
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -39,13 +42,19 @@ export default function App() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        setImage(e.target?.result as string);
-        setCurrentResults([]);
-        setError(null);
+        const result = e.target?.result as string;
+        if (scanMode === '360') {
+          setMultiImages(prev => [...prev, result]);
+          setScanStep(prev => prev + 1);
+        } else {
+          setImage(result);
+          setCurrentResults([]);
+          setError(null);
+        }
       };
       reader.readAsDataURL(file);
     }
-  }, []);
+  }, [scanMode]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -54,7 +63,9 @@ export default function App() {
   });
 
   const handleAnalyze = async () => {
-    if (!image) return;
+    const imagesToAnalyze = scanMode === '360' ? multiImages : (image ? [image] : []);
+    if (imagesToAnalyze.length === 0) return;
+    
     if (isOffline) {
       setError('You are currently offline. AI analysis requires an internet connection.');
       return;
@@ -62,7 +73,7 @@ export default function App() {
     setIsAnalyzing(true);
     setError(null);
     try {
-      const results = await analyzeBottleImage(image);
+      const results = await analyzeBottleMultiAngle(imagesToAnalyze);
       setCurrentResults(results);
     } catch (err) {
       console.error(err);
@@ -70,6 +81,20 @@ export default function App() {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  const start360Scan = () => {
+    setScanMode('360');
+    setScanStep(0);
+    setMultiImages([]);
+    setImage(null);
+    setCurrentResults([]);
+  };
+
+  const cancel360Scan = () => {
+    setScanMode('single');
+    setScanStep(0);
+    setMultiImages([]);
   };
 
   const addToInventory = (bottle: BottleAnalysis) => {
@@ -82,6 +107,9 @@ export default function App() {
 
   const reset = () => {
     setImage(null);
+    setMultiImages([]);
+    setScanStep(0);
+    setScanMode('single');
     setCurrentResults([]);
     setError(null);
   };
@@ -138,7 +166,7 @@ export default function App() {
 
       <main className="max-w-md mx-auto p-6 space-y-6">
         <AnimatePresence mode="wait">
-          {!image ? (
+          {!image && (scanMode === 'single' || scanStep < 4) ? (
             <motion.div
               key="upload"
               initial={{ opacity: 0, y: 20 }}
@@ -147,8 +175,26 @@ export default function App() {
               className="space-y-4"
             >
               <div className="space-y-2">
-                <h2 className="text-2xl font-light">Inventory Check</h2>
-                <p className="text-white/40 text-sm">Snap a photo of one or more bottles to calculate remaining pours.</p>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-light">
+                    {scanMode === '360' ? `360° Scan: Step ${scanStep + 1}` : 'Inventory Check'}
+                  </h2>
+                  {scanMode === '360' && (
+                    <button onClick={cancel360Scan} className="text-[10px] font-mono uppercase tracking-widest text-red-400 hover:text-red-300">
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                <p className="text-white/40 text-sm">
+                  {scanMode === '360' 
+                    ? [
+                        "Capture the front of the bottle.",
+                        "Rotate bottle 90° clockwise.",
+                        "Rotate bottle another 90°.",
+                        "Capture the final angle."
+                      ][scanStep]
+                    : "Snap a photo of one or more bottles to calculate remaining pours."}
+                </p>
               </div>
 
               <div
@@ -169,17 +215,37 @@ export default function App() {
                   />
                 </div>
 
+                {scanMode === '360' && multiImages.length > 0 && (
+                  <div className="absolute inset-0">
+                    <img src={multiImages[multiImages.length - 1]} className="w-full h-full object-cover opacity-30 grayscale" />
+                  </div>
+                )}
+
                 <div className="w-16 h-16 rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/40 flex items-center justify-center group-hover:scale-110 transition-transform z-10">
                   <Scan className="w-8 h-8 text-[#151619]" />
                 </div>
                 <div className="text-center z-10">
-                  <p className="font-bold text-lg">LiDAR Precision Scan</p>
-                  <p className="text-xs text-white/40 mt-1">Align bottle for 99% accuracy</p>
+                  <p className="font-bold text-lg">
+                    {scanMode === '360' ? `Capture Angle ${scanStep + 1}` : 'LiDAR Precision Scan'}
+                  </p>
+                  <p className="text-xs text-white/40 mt-1">
+                    {scanMode === '360' ? 'Follow the rotation guide' : 'Align bottle for 99% accuracy'}
+                  </p>
                 </div>
                 
                 {/* Precision Guides */}
                 <div className="absolute inset-8 border border-white/5 rounded-lg pointer-events-none flex items-center justify-center">
                   <Target className="w-8 h-8 text-white/5" />
+                  {scanMode === '360' && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <motion.div 
+                        animate={{ rotate: scanStep * 90 }}
+                        className="w-32 h-32 border-2 border-emerald-500/20 rounded-full border-t-emerald-500 flex items-center justify-center"
+                      >
+                        <ChevronRight className="w-6 h-6 text-emerald-500" />
+                      </motion.div>
+                    </div>
+                  )}
                 </div>
                 
                 {/* Decorative corners */}
@@ -189,12 +255,32 @@ export default function App() {
                 <div className="absolute bottom-4 right-4 w-4 h-4 border-b border-r border-white/20" />
               </div>
 
-              <div className="bg-white/5 rounded-xl p-4 flex gap-3">
-                <Info className="w-5 h-5 text-emerald-500 shrink-0" />
-                <p className="text-xs text-white/60 leading-relaxed">
-                  You can capture multiple bottles in one shot. Ensure all labels and liquid levels are clearly visible.
-                </p>
-              </div>
+              {scanMode === 'single' && (
+                <div className="grid grid-cols-1 gap-3">
+                  <button 
+                    onClick={start360Scan}
+                    className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 flex items-center justify-between transition-all group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                        <Scan className="w-5 h-5 text-emerald-500" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-sm font-medium">360° Precision Scan</p>
+                        <p className="text-[10px] text-white/40 uppercase tracking-widest">Highest Accuracy</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-emerald-500 transition-colors" />
+                  </button>
+
+                  <div className="bg-white/5 rounded-xl p-4 flex gap-3">
+                    <Info className="w-5 h-5 text-emerald-500 shrink-0" />
+                    <p className="text-xs text-white/60 leading-relaxed">
+                      You can capture multiple bottles in one shot. Ensure all labels and liquid levels are clearly visible.
+                    </p>
+                  </div>
+                </div>
+              )}
             </motion.div>
           ) : (
             <motion.div
@@ -204,7 +290,7 @@ export default function App() {
               className="space-y-6"
             >
               <div className="relative aspect-[3/4] rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-                <img src={image} alt="Bottle" className="w-full h-full object-cover" />
+                <img src={scanMode === '360' ? multiImages[0] : (image || '')} alt="Bottle" className="w-full h-full object-cover" />
                 
                 {/* Scanning Overlay */}
                 <div className="absolute inset-0 pointer-events-none">
@@ -213,6 +299,16 @@ export default function App() {
                   <div className="absolute top-0 left-1/2 w-px h-full bg-emerald-500/30" />
                 </div>
 
+                {scanMode === '360' && (
+                  <div className="absolute bottom-4 left-4 right-4 flex gap-2">
+                    {multiImages.map((img, i) => (
+                      <div key={i} className="w-12 h-12 rounded-lg border border-white/20 overflow-hidden">
+                        <img src={img} className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {isAnalyzing && (
                   <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
                     <div className="relative">
@@ -220,7 +316,9 @@ export default function App() {
                       <Scan className="w-6 h-6 text-emerald-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
                     </div>
                     <div className="text-center">
-                      <p className="font-mono text-xs uppercase tracking-widest text-emerald-500">LiDAR Depth Analysis</p>
+                      <p className="font-mono text-xs uppercase tracking-widest text-emerald-500">
+                        {scanMode === '360' ? '360° Multi-Angle Analysis' : 'LiDAR Depth Analysis'}
+                      </p>
                       <p className="text-[10px] text-white/40 mt-1">Calculating liquid volume...</p>
                     </div>
                   </div>
@@ -232,7 +330,7 @@ export default function App() {
                   onClick={handleAnalyze}
                   className="w-full bg-emerald-500 hover:bg-emerald-400 text-[#151619] font-bold py-4 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98] flex items-center justify-center gap-2"
                 >
-                  Calculate Pours
+                  {scanMode === '360' ? 'Synthesize & Calculate' : 'Calculate Pours'}
                   <ChevronRight className="w-5 h-5" />
                 </button>
               )}
